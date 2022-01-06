@@ -102,3 +102,9 @@ func (s *store) Close() error {
 	}
 	return s.File.Close()
 }
+
+func (s *store) Size() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return int64(s.size)
+}

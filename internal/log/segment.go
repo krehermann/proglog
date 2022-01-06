@@ -1,6 +1,7 @@
 package log
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -20,13 +21,18 @@ type segment struct {
 	baseOffset, nextOffset uint64
 }
 
+var (
+	storeExt = ".store"
+	indexExt = ".index"
+)
+
 func newSegment(dir string, baseOffset uint64, c Config) (*segment, error) {
 	s := &segment{
 		cfg:        c,
 		baseOffset: baseOffset,
 		nextOffset: baseOffset,
 	}
-	storeFile := filepath.Join(dir, fmt.Sprintf("%d%s", baseOffset, ".store"))
+	storeFile := filepath.Join(dir, fmt.Sprintf("%d%s", baseOffset, storeExt))
 	sf, err := os.OpenFile(storeFile, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
 	if err != nil {
 		return nil, err
@@ -36,7 +42,7 @@ func newSegment(dir string, baseOffset uint64, c Config) (*segment, error) {
 		return nil, err
 	}
 	idxF, err := os.OpenFile(
-		filepath.Join(dir, fmt.Sprintf("%d%s", baseOffset, ".index")),
+		filepath.Join(dir, fmt.Sprintf("%d%s", baseOffset, indexExt)),
 		os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return nil, err
@@ -47,8 +53,10 @@ func newSegment(dir string, baseOffset uint64, c Config) (*segment, error) {
 	}
 	off, _, err := s.idx.Read(-1)
 	// EOF is not an error condition, just means no data
-	if err != nil && err != io.EOF {
-		return nil, err
+	if err != nil {
+		if !errors.Is(err, io.EOF) {
+			return nil, err
+		}
 	} else {
 		// if we didn't get EOF, then there is an index entry. Set next to one after it.
 		s.nextOffset = s.baseOffset + uint64(off) + 1
@@ -80,8 +88,11 @@ func (s *segment) Append(r *api.Record) (offset uint64, err error) {
 	return r.Offset, nil
 }
 
-func (s *segment) Read(off uint64) (r *api.Record, err error) {
-	_, pos, err := s.idx.Read(int64(off))
+//Read returns the record given the offset
+//offset is the absolute offset
+func (s *segment) Read(off uint64) (*api.Record, error) {
+	// need to translate absolute offset to relative in this segment
+	_, pos, err := s.idx.Read(int64(off - s.baseOffset))
 	if err != nil {
 		return nil, err
 	}
@@ -89,6 +100,38 @@ func (s *segment) Read(off uint64) (r *api.Record, err error) {
 	if err != nil {
 		return nil, err
 	}
+	r := &api.Record{}
 	err = proto.Unmarshal(buf, r)
 	return r, err
+}
+
+//IsFull returns true if either the index or store are equal/greater than their respective configured values
+func (s *segment) IsFull() bool {
+	return s.str.size >= s.cfg.Segment.MaxStoreBytes || s.idx.size >= s.cfg.Segment.MaxIndexBytes
+}
+
+func (s *segment) Remove() error {
+	err := s.Close()
+	if err != nil {
+		return err
+	}
+	err = os.Remove(s.idx.Name())
+	if err != nil {
+		return err
+	}
+	return os.Remove(s.str.Name())
+
+}
+
+func (s *segment) Close() error {
+	err := s.idx.Close()
+	if err != nil {
+		return err
+	}
+	return s.str.Close()
+}
+
+//nearestMultiple returns the nearest and lesser multiple of k in j
+func nearestMultiple(j, k uint64) uint64 {
+	return (j / k) * k
 }
