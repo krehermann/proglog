@@ -4,5 +4,10 @@
 			"path": "."
 		}
 	],
-	"settings": {}
+	"settings": {
+		 "go.goroot": "/usr/local/go",
+		 "go.gopath": "/Users/krehermann/go",
+		 "go.toolsGopath": "/Users/krehermann/go",
+		// "go.useLanguageServer": true,
+	}
 }

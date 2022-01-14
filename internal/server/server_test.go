@@ -7,69 +7,114 @@ import (
 	"testing"
 
 	api "github.com/krehermann/proglog/api/v1"
+	"github.com/krehermann/proglog/internal/auth"
+	"github.com/krehermann/proglog/internal/config"
 	"github.com/krehermann/proglog/internal/log"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 )
 
 func TestServer(t *testing.T) {
 	for scenario, fn := range map[string]func(
 		t *testing.T,
-		client api.LogClient,
+		rootClient api.LogClient,
+		nobodyClient api.LogClient,
 		cfg *Config,
 	){
 		"produce/consume a message to/from log succeeds": testProduceConsume,
 		"produce/consume stream succeeds":                testProduceConsumeStream,
 		"consume past log boundary fails":                testConsumePastEnd,
+		"unauthorized fails":                             testUnathorized,
 	} {
 		t.Run(scenario, func(t *testing.T) {
-			client, config, teardown := setupTest(t, nil)
+			rootClient, nobodyClient, config, teardown := setupTest(t, nil)
 			defer teardown()
-			fn(t, client, config)
+			fn(t, rootClient, nobodyClient, config)
 		})
 	}
 }
 
 func setupTest(t *testing.T, cfgFn func(*Config)) (
-	client api.LogClient,
+	rootClient api.LogClient,
+	nobodyClient api.LogClient,
 	cfg *Config,
 	teardown func(),
 ) {
 	t.Helper()
-	l, err := net.Listen("tcp", ":0")
-	assert.NoError(t, err)
-	clientOpts := []grpc.DialOption{grpc.WithInsecure()}
-	cc, err := grpc.Dial(l.Addr().String(), clientOpts...)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
 	assert.NoError(t, err)
 
+	newClient := func(crtPath, keyPath string) (
+		*grpc.ClientConn,
+		api.LogClient,
+		[]grpc.DialOption,
+	) {
+		clientTLSConfig, err := config.SetupTLSConfig(config.TLSConfig{
+			CertFile: crtPath,
+			KeyFile:  keyPath,
+			CAFile:   config.CAFile,
+			Server:   false,
+		})
+		assert.NoError(t, err)
+		clientCreds := credentials.NewTLS(clientTLSConfig)
+
+		opts := []grpc.DialOption{grpc.WithTransportCredentials(clientCreds)}
+		cc, err := grpc.Dial(l.Addr().String(),
+			opts...)
+		assert.NoError(t, err)
+		client := api.NewLogClient(cc)
+		return cc, client, opts
+	}
+	var rootConn *grpc.ClientConn
+	rootConn, rootClient, _ = newClient(
+		config.RootClientCertFile,
+		config.RootClientKeyFile,
+	)
+	var nobodyConn *grpc.ClientConn
+	nobodyConn, nobodyClient, _ = newClient(
+		config.NobodyClientCertFile,
+		config.NobodyClientKeyFile,
+	)
+	serverTLSConfig, err := config.SetupTLSConfig(config.TLSConfig{
+		CertFile:      config.ServerCertFile,
+		KeyFile:       config.ServerKeyFile,
+		CAFile:        config.CAFile,
+		ServerAddress: l.Addr().String(),
+		Server:        true,
+	})
+	assert.NoError(t, err)
+	serverCreds := credentials.NewTLS(serverTLSConfig)
 	dir, err := ioutil.TempDir("", "service-test")
 	assert.NoError(t, err)
 
 	cmtlog, err := log.NewLog(dir, log.Config{})
 	assert.NoError(t, err)
 
-	cfg = &Config{CommitLog: cmtlog}
+	authorizer := auth.New(config.ACLModelFile, config.ACLPolicyFile)
+	cfg = &Config{CommitLog: cmtlog, Authorizer: authorizer}
 	if cfgFn != nil {
 		cfgFn(cfg)
 	}
-	srv, err := NewGRPCServer(cfg)
+	srv, err := NewGRPCServer(cfg, grpc.Creds(serverCreds))
 	assert.NoError(t, err)
 	go func() {
 		srv.Serve(l)
 	}()
 
-	client = api.NewLogClient(cc)
-	return client, cfg, func() {
+	return rootClient, nobodyClient, cfg, func() {
 		srv.Stop()
-		cc.Close()
+		rootConn.Close()
+		nobodyConn.Close()
 		l.Close()
-		cmtlog.Remove()
+		//cmtlog.Remove()
 	}
 
 }
 
-func testProduceConsume(t *testing.T, client api.LogClient, cfg *Config) {
+func testProduceConsume(t *testing.T, client, _ api.LogClient, cfg *Config) {
 	req := &api.ProduceRequest{
 		Record: &api.Record{
 			Value: []byte("my name is what"),
@@ -88,7 +133,7 @@ func testProduceConsume(t *testing.T, client api.LogClient, cfg *Config) {
 
 }
 
-func testConsumePastEnd(t *testing.T, client api.LogClient, cfg *Config) {
+func testConsumePastEnd(t *testing.T, client, _ api.LogClient, cfg *Config) {
 	req := &api.ProduceRequest{
 		Record: &api.Record{
 			Value: []byte("my name is what"),
@@ -108,7 +153,7 @@ func testConsumePastEnd(t *testing.T, client api.LogClient, cfg *Config) {
 
 }
 
-func testProduceConsumeStream(t *testing.T, client api.LogClient, cfg *Config) {
+func testProduceConsumeStream(t *testing.T, client, _ api.LogClient, cfg *Config) {
 	ctx := context.Background()
 	records := []*api.Record{
 		{
@@ -144,4 +189,30 @@ func testProduceConsumeStream(t *testing.T, client api.LogClient, cfg *Config) {
 		}
 	}
 
+}
+
+func testUnathorized(
+	t *testing.T,
+	_,
+	client api.LogClient,
+	config *Config,
+) {
+	ctx := context.Background()
+	produce, err := client.Produce(ctx, &api.ProduceRequest{
+		Record: &api.Record{
+			Value: []byte("stand out of our light"),
+		},
+	})
+	assert.Nil(t, produce)
+
+	gotCode, wantCode := status.Code(err), codes.PermissionDenied
+	assert.Equal(t, wantCode, gotCode)
+
+	consume, err := client.Consume(ctx,
+		&api.ConsumeRequest{
+			Offset: 0,
+		})
+	assert.Nil(t, consume)
+	gotCode, wantCode = status.Code(err), codes.PermissionDenied
+	assert.Equal(t, wantCode, gotCode)
 }
