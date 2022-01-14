@@ -50,8 +50,8 @@ func testAppendRead(t *testing.T, log *Log) {
 
 func testOutOfRangeErr(t *testing.T, log *Log) {
 	r, err := log.Read(1)
-	assert.ErrorIs(t, err, api.ErrOffsetOutOfRange{})
-	assert.Equal(t, 1, err.(api.ErrOffsetOutOfRange).Offset)
+	assert.Error(t, err)
+	assert.Equal(t, uint64(1), err.(api.ErrOffsetOutOfRange).Offset)
 	assert.Nil(t, r)
 }
 

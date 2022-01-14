@@ -51,8 +51,6 @@ func TestSegment(t *testing.T) {
 	s, err = newSegment(d, base, cfg)
 	assert.NoError(t, err)
 	assert.True(t, s.IsFull())
-	_, err = s.Append(&api.Record{})
-	assert.ErrorIs(t, err, io.EOF)
 
 	//delete and recreate empty segment
 	err = s.Remove()
