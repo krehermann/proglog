@@ -76,9 +76,10 @@ require (
 	go.etcd.io/etcd/server/v3 v3.5.0-alpha.0 // indirect
 	go.etcd.io/etcd/tests/v3 v3.5.0-alpha.0 // indirect
 	go.etcd.io/etcd/v3 v3.5.0-alpha.0 // indirect
+	go.opencensus.io v0.23.0 // indirect
 	go.uber.org/atomic v1.7.0 // indirect
 	go.uber.org/multierr v1.7.0 // indirect
-	go.uber.org/zap v1.16.0 // indirect
+	go.uber.org/zap v1.20.0 // indirect
 	golang.org/x/crypto v0.0.0-20210506145944-38f3c27a63bf // indirect
 	golang.org/x/mod v0.4.2 // indirect
 	golang.org/x/net v0.0.0-20210510120150-4163338589ed // indirect
@@ -86,7 +87,7 @@ require (
 	golang.org/x/sys v0.0.0-20210511113859-b0526f3d8744 // indirect
 	golang.org/x/text v0.3.6 // indirect
 	golang.org/x/time v0.0.0-20210220033141-f8bda1e9f3ba // indirect
-	golang.org/x/tools v0.1.0 // indirect
+	golang.org/x/tools v0.1.5 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20210510173355-fb37daa5cd7a // indirect
 	google.golang.org/grpc v1.43.0 // indirect
